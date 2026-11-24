@@ -1,3 +1,4 @@
+
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import Joi from 'joi';
@@ -5,6 +6,7 @@ import Joi from 'joi';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { DatabaseModule } from './database/database.module.js';
+import { IdentityModule } from './modules/identity/identity.module.js';
 
 @Module({
   imports: [
@@ -23,6 +25,7 @@ import { DatabaseModule } from './database/database.module.js';
     }),
 
     DatabaseModule,
+    IdentityModule,
   ],
   controllers: [AppController],
   providers: [AppService],
