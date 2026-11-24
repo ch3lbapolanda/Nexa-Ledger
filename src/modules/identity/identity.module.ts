@@ -1,4 +1,3 @@
-
 import { Module } from '@nestjs/common';
 
 import { IdentityController } from './identity.controller.js';
@@ -11,6 +10,9 @@ import { PasswordHasherService } from './password-hasher.service.js';
     IdentityService,
     PasswordHasherService,
   ],
-  exports: [IdentityService],
+  exports: [
+    IdentityService,
+    PasswordHasherService,
+  ],
 })
 export class IdentityModule {}

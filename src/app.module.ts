@@ -1,4 +1,3 @@
-
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import Joi from 'joi';
@@ -7,6 +6,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { DatabaseModule } from './database/database.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
+import { AuthenticationModule } from './modules/authentication/authentication.module.js';
 
 @Module({
   imports: [
@@ -21,11 +21,14 @@ import { IdentityModule } from './modules/identity/identity.module.js';
         PORT: Joi.number().port().default(3000),
 
         DATABASE_URL: Joi.string().required(),
+
+        JWT_SECRET: Joi.string().min(32).required(),
       }),
     }),
 
     DatabaseModule,
     IdentityModule,
+    AuthenticationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
