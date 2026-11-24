@@ -4,7 +4,6 @@ import Joi from 'joi';
 
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
-
 import { DatabaseModule } from './database/database.module.js';
 
 @Module({
@@ -18,9 +17,12 @@ import { DatabaseModule } from './database/database.module.js';
           .default('development'),
 
         PORT: Joi.number().port().default(3000),
+
         DATABASE_URL: Joi.string().required(),
       }),
     }),
+
+    DatabaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],
