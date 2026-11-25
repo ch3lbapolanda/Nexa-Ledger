@@ -12,6 +12,7 @@ import { AuthenticationService } from './authentication.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { JwtPayload } from './interfaces/jwt-payload.interface.js';
+import { Throttle } from '@nestjs/throttler';
 
 type AuthenticatedRequest = Request & {
   user: JwtPayload;
@@ -23,6 +24,8 @@ export class AuthenticationController {
     private readonly authenticationService: AuthenticationService,
   ) {}
 
+  
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return {
@@ -30,6 +33,7 @@ export class AuthenticationController {
       data: await this.authenticationService.login(dto),
     };
   }
+  
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
