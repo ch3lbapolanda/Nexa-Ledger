@@ -24,12 +24,38 @@ enum AuthProvider {
   APPLE
 }
 
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum AccountNormalBalance {
+  DEBIT
+  CREDIT
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
 model User {
   id       String     @id @default(uuid()) @db.Uuid
   email    String     @unique @db.VarChar(255)
   fullName String     @db.VarChar(120)
   role     UserRole   @default(CUSTOMER)
   status   UserStatus @default(PENDING_VERIFICATION)
+  wallet   Wallet?
 
   credentials UserCredential[]
 
@@ -54,4 +80,38 @@ model UserCredential {
   @@unique([provider, providerUserId])
   @@index([userId])
   @@map("user_credentials")
+}
+
+model Wallet {
+  id       String       @id @default(uuid()) @db.Uuid
+  userId   String       @unique @db.Uuid
+  currency String       @default("IDR") @db.Char(3)
+  status   WalletStatus @default(ACTIVE)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  account Account?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("wallets")
+}
+
+model Account {
+  id            String               @id @default(uuid()) @db.Uuid
+  walletId      String?              @unique @db.Uuid
+  code          String               @unique @db.VarChar(50)
+  name          String               @db.VarChar(120)
+  type          AccountType
+  normalBalance AccountNormalBalance
+  balance       BigInt               @default(0)
+  status        AccountStatus        @default(ACTIVE)
+
+  wallet Wallet? @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([type, status])
+  @@map("accounts")
 }

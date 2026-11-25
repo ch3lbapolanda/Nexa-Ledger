@@ -9,6 +9,7 @@ import { AppService } from './app.service.js';
 import { DatabaseModule } from './database/database.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { AuthenticationModule } from './modules/authentication/authentication.module.js';
+import { WalletModule } from './modules/wallet/wallet.module.js';
 
 @Module({
   imports: [
