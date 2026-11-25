@@ -12,6 +12,16 @@ enum UserRole {
   ADMIN
 }
 
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+}
+
+enum JournalLineSide {
+  DEBIT
+  CREDIT
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -104,6 +114,7 @@ model Account {
   name          String               @db.VarChar(120)
   type          AccountType
   normalBalance AccountNormalBalance
+  journalLines  JournalLine[]
   balance       BigInt               @default(0)
   status        AccountStatus        @default(ACTIVE)
 
@@ -114,4 +125,38 @@ model Account {
 
   @@index([type, status])
   @@map("accounts")
+}
+
+model JournalEntry {
+  id          String             @id @default(uuid()) @db.Uuid
+  reference   String?            @unique @db.VarChar(100)
+  description String             @db.VarChar(255)
+  status      JournalEntryStatus @default(DRAFT)
+  postedAt    DateTime?          @db.Timestamptz(3)
+
+  lines JournalLine[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([postedAt])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String          @id @default(uuid()) @db.Uuid
+  journalEntryId String          @db.Uuid
+  accountId      String          @db.Uuid
+  side           JournalLineSide
+  amount         BigInt
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([journalEntryId])
+  @@index([accountId, createdAt])
+  @@map("journal_lines")
 }
