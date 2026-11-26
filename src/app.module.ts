@@ -11,6 +11,7 @@ import { IdentityModule } from './modules/identity/identity.module.js';
 import { AuthenticationModule } from './modules/authentication/authentication.module.js';
 import { WalletModule } from './modules/wallet/wallet.module.js';
 import { TransactionModule } from './modules/transaction/transaction.module.js';
+import { TransferModule } from './modules/transfer/transfer.module.js';
 
 @Module({
   imports: [
@@ -37,7 +38,9 @@ import { TransactionModule } from './modules/transaction/transaction.module.js';
     DatabaseModule,
     IdentityModule,
     AuthenticationModule,
+    WalletModule,
     TransactionModule,
+    TransferModule,
   ],
   controllers: [AppController],
   providers: [
