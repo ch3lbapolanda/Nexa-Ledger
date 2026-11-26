@@ -367,4 +367,98 @@ describe('TransferService integration', () => {
       }),
     ).toBe(0);
   });
+  
+  it('should prevent double spending during concurrent transfers', async () => {
+    const sender = await createWallet('concurrent-sender', 100_000n);
+    const receiverA = await createWallet('concurrent-receiver-a', 0n);
+    const receiverB = await createWallet('concurrent-receiver-b', 0n);
+
+    const results = await Promise.allSettled([
+      transferService.create(sender.user.id, {
+        receiverWalletId: receiverA.wallet.id,
+        amount: 80_000n,
+        idempotencyKey: randomUUID(),
+        description: 'Concurrent transfer A',
+      }),
+      transferService.create(sender.user.id, {
+        receiverWalletId: receiverB.wallet.id,
+        amount: 80_000n,
+        idempotencyKey: randomUUID(),
+        description: 'Concurrent transfer B',
+      }),
+    ]);
+
+    const successful = results.filter(
+      (result) => result.status === 'fulfilled',
+    );
+
+    const failed = results.filter(
+      (result) => result.status === 'rejected',
+    );
+
+    expect(successful).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+
+    const senderAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: sender.account.id },
+    });
+
+    const receiverAAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: receiverA.account.id },
+    });
+
+    const receiverBAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: receiverB.account.id },
+    });
+
+    expect(senderAccount.balance).toBe(20_000n);
+
+    expect(
+      receiverAAccount.balance + receiverBAccount.balance,
+    ).toBe(80_000n);
+
+    expect(
+      await prisma.transfer.count({
+        where: { senderWalletId: sender.wallet.id },
+      }),
+    ).toBe(1);
+  });
+
+  it('should process concurrent identical idempotent requests only once', async () => {
+    const sender = await createWallet('concurrent-idem-sender', 500_000n);
+    const receiver = await createWallet('concurrent-idem-receiver', 0n);
+
+    const input = {
+      receiverWalletId: receiver.wallet.id,
+      amount: 75_000n,
+      idempotencyKey: randomUUID(),
+      description: 'Concurrent idempotency test',
+    };
+
+    const results = await Promise.all([
+      transferService.create(sender.user.id, input),
+      transferService.create(sender.user.id, input),
+    ]);
+
+    expect(results[0].id).toBe(results[1].id);
+
+    const senderAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: sender.account.id },
+    });
+
+    const receiverAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: receiver.account.id },
+    });
+
+    expect(senderAccount.balance).toBe(425_000n);
+    expect(receiverAccount.balance).toBe(75_000n);
+
+    expect(
+      await prisma.transfer.count({
+        where: { senderWalletId: sender.wallet.id },
+      }),
+    ).toBe(1);
+  });
+
+  
 });
