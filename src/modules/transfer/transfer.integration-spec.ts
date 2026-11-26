@@ -459,6 +459,56 @@ describe('TransferService integration', () => {
       }),
     ).toBe(1);
   });
+it('should normalize idempotency key before storing it', async () => {
+  const sender = await createWallet(
+    'normalize-sender',
+    500_000n,
+  );
 
-  
+  const receiver = await createWallet(
+    'normalize-receiver',
+    100_000n,
+  );
+
+  const input = {
+    receiverWalletId: receiver.wallet.id,
+    amount: 10_000n,
+    idempotencyKey: '  transfer-normalize-001  ',
+    description: '  Test normalization  ',
+  };
+
+  const first = await transferService.create(
+    sender.user.id,
+    input,
+  );
+
+  const second = await transferService.create(
+    sender.user.id,
+    {
+      ...input,
+      idempotencyKey: 'transfer-normalize-001',
+      description: 'Test normalization',
+    },
+  );
+
+  expect(first.id).toBe(second.id);
+
+  const stored = await prisma.transfer.findUnique({
+    where: {
+      senderWalletId_idempotencyKey: {
+        senderWalletId: sender.wallet.id,
+        idempotencyKey: 'transfer-normalize-001',
+      },
+    },
+  });
+
+  expect(stored).not.toBeNull();
+  expect(stored?.idempotencyKey).toBe('transfer-normalize-001');
+
+  const senderAccount = await prisma.account.findUniqueOrThrow({
+    where: { id: sender.account.id },
+  });
+
+  expect(senderAccount.balance).toBe(490_000n);
+});
 });

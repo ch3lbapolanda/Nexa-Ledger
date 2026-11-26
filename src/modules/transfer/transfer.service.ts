@@ -40,53 +40,44 @@ export class TransferService {
   ) {}
 
   async create(
-    userId: string,
-    input: CreateTransferInput,
-  ) {
-    this.validateInput(input);
+  userId: string,
+  input: CreateTransferInput,
+) {
+  this.validateInput(input);
 
-    const senderWallet = await this.prisma.wallet.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
+  const normalizedInput: CreateTransferInput = {
+    ...input,
+    receiverWalletId: input.receiverWalletId.trim().toLowerCase(),
+    idempotencyKey: input.idempotencyKey.trim(),
+    description: input.description.trim(),
+  };
 
-    if (!senderWallet) {
-      throw new NotFoundException('Sender wallet not found');
-    }
+  const senderWallet = await this.prisma.wallet.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
 
-    if (senderWallet.id === input.receiverWalletId) {
-      throw new BadRequestException(
-        'Cannot transfer to the same wallet',
-      );
-    }
+  if (!senderWallet) {
+    throw new NotFoundException('Sender wallet not found');
+  }
 
-    const requestHash = this.createRequestHash(input);
+  if (senderWallet.id === normalizedInput.receiverWalletId) {
+    throw new BadRequestException(
+      'Cannot transfer to the same wallet',
+    );
+  }
 
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        return this.executeTransfer(
-          tx,
-          userId,
-          senderWallet.id,
-          input,
-          requestHash,
-        );
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        return this.resolveIdempotency(
-          userId,
-          senderWallet.id,
-          input.idempotencyKey,
-          requestHash,
-        );
-      }
+  const requestHash = this.createRequestHash(normalizedInput);
 
-      throw error;
-    }
+  return this.prisma.$transaction((tx) =>
+    this.executeTransfer(
+      tx,
+      userId,
+      senderWallet.id,
+      normalizedInput,
+      requestHash,
+    ),
+  );
   }
 
   private async executeTransfer(
@@ -271,43 +262,7 @@ export class TransferService {
     });
   }
 
-  private async resolveIdempotency(
-    userId: string,
-    senderWalletId: string,
-    idempotencyKey: string,
-    requestHash: string,
-  ) {
-    const existing = await this.prisma.transfer.findUnique({
-      where: {
-        senderWalletId_idempotencyKey: {
-          senderWalletId,
-          idempotencyKey,
-        },
-      },
-      include: {
-        transaction: true,
-      },
-    });
-
-    if (!existing) {
-      throw new ConflictException(
-        'Transfer conflicts with an existing record',
-      );
-    }
-
-    if (existing.senderWalletId !== senderWalletId) {
-      throw new NotFoundException('Transfer not found');
-    }
-
-    if (existing.requestHash !== requestHash) {
-      throw new ConflictException(
-        'Idempotency key already used with different request data',
-      );
-    }
-
-    return this.serialize(existing);
-  }
-
+  
   private createRequestHash(
     input: CreateTransferInput,
   ): string {
@@ -336,7 +291,7 @@ export class TransferService {
   }
 
   private validateInput(input: CreateTransferInput): void {
-    if (!input.receiverWalletId) {
+    if (!input.receiverWalletId?.trim()) {
       throw new BadRequestException(
         'Receiver wallet ID is required',
       );
