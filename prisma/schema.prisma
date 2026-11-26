@@ -12,16 +12,6 @@ enum UserRole {
   ADMIN
 }
 
-enum JournalEntryStatus {
-  DRAFT
-  POSTED
-}
-
-enum JournalLineSide {
-  DEBIT
-  CREDIT
-}
-
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -59,14 +49,35 @@ enum AccountStatus {
   CLOSED
 }
 
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+}
+
+enum JournalLineSide {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+}
+
+enum TransactionStatus {
+  COMPLETED
+  REVERSED
+}
+
 model User {
   id       String     @id @default(uuid()) @db.Uuid
   email    String     @unique @db.VarChar(255)
   fullName String     @db.VarChar(120)
   role     UserRole   @default(CUSTOMER)
   status   UserStatus @default(PENDING_VERIFICATION)
-  wallet   Wallet?
 
+  wallet      Wallet?
   credentials UserCredential[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -114,11 +125,11 @@ model Account {
   name          String               @db.VarChar(120)
   type          AccountType
   normalBalance AccountNormalBalance
-  journalLines  JournalLine[]
   balance       BigInt               @default(0)
   status        AccountStatus        @default(ACTIVE)
 
-  wallet Wallet? @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  wallet       Wallet?       @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  journalLines JournalLine[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -134,7 +145,8 @@ model JournalEntry {
   status      JournalEntryStatus @default(DRAFT)
   postedAt    DateTime?          @db.Timestamptz(3)
 
-  lines JournalLine[]
+  lines       JournalLine[]
+  transaction Transaction?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -159,4 +171,25 @@ model JournalLine {
   @@index([journalEntryId])
   @@index([accountId, createdAt])
   @@map("journal_lines")
+}
+
+model Transaction {
+  id          String            @id @default(uuid()) @db.Uuid
+  reference   String            @unique @db.VarChar(100)
+  type        TransactionType
+  status      TransactionStatus @default(COMPLETED)
+  amount      BigInt
+  currency    String            @default("IDR") @db.Char(3)
+  description String            @db.VarChar(255)
+
+  journalEntryId String       @unique @db.Uuid
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+
+  completedAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([type, status, createdAt])
+  @@index([createdAt])
+  @@map("financial_transactions")
 }
