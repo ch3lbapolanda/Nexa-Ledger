@@ -104,10 +104,12 @@ model UserCredential {
 }
 
 model Wallet {
-  id       String       @id @default(uuid()) @db.Uuid
-  userId   String       @unique @db.Uuid
-  currency String       @default("IDR") @db.Char(3)
-  status   WalletStatus @default(ACTIVE)
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @unique @db.Uuid
+  currency          String       @default("IDR") @db.Char(3)
+  status            WalletStatus @default(ACTIVE)
+  sentTransfers     Transfer[]   @relation("TransferSender")
+  receivedTransfers Transfer[]   @relation("TransferReceiver")
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Restrict)
   account Account?
@@ -181,6 +183,7 @@ model Transaction {
   amount      BigInt
   currency    String            @default("IDR") @db.Char(3)
   description String            @db.VarChar(255)
+  transfer    Transfer?
 
   journalEntryId String       @unique @db.Uuid
   journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
@@ -192,4 +195,24 @@ model Transaction {
   @@index([type, status, createdAt])
   @@index([createdAt])
   @@map("financial_transactions")
+}
+
+model Transfer {
+  id               String @id @default(uuid()) @db.Uuid
+  transactionId    String @unique @db.Uuid
+  senderWalletId   String @db.Uuid
+  receiverWalletId String @db.Uuid
+  idempotencyKey   String @db.VarChar(100)
+  requestHash      String @db.Char(64)
+
+  transaction    Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  senderWallet   Wallet      @relation("TransferSender", fields: [senderWalletId], references: [id], onDelete: Restrict)
+  receiverWallet Wallet      @relation("TransferReceiver", fields: [receiverWalletId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([senderWalletId, idempotencyKey])
+  @@index([senderWalletId, createdAt])
+  @@index([receiverWalletId, createdAt])
+  @@map("transfers")
 }
