@@ -258,10 +258,28 @@ export class TransactionService {
     });
   }
 
-  private serialize<T extends { amount: bigint }>(transaction: T) {
+  private serialize<
+    T extends {
+      amount: bigint;
+      journalEntry?: {
+        lines: Array<{ amount: bigint }>;
+      } | null;
+    },
+  >(transaction: T) {
     return {
       ...transaction,
       amount: transaction.amount.toString(),
+      ...(transaction.journalEntry
+        ? {
+            journalEntry: {
+              ...transaction.journalEntry,
+              lines: transaction.journalEntry.lines.map((line) => ({
+                ...line,
+                amount: line.amount.toString(),
+              })),
+            },
+          }
+        : {}),
     };
   }
 
@@ -316,4 +334,5 @@ export class TransactionService {
     }
   }
 }
+
 
