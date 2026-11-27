@@ -189,6 +189,11 @@ model Transaction {
   journalEntryId String       @unique @db.Uuid
   journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
 
+  // Reversal relationship
+  reversalOfId String?      @unique @db.Uuid
+  reversalOf   Transaction? @relation("TransactionReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy   Transaction? @relation("TransactionReversal")
+
   completedAt DateTime @default(now()) @db.Timestamptz(3)
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
