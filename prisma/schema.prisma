@@ -79,6 +79,7 @@ model User {
 
   wallet      Wallet?
   credentials UserCredential[]
+  auditLogs   AuditLog[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -215,4 +216,24 @@ model Transfer {
   @@index([senderWalletId, createdAt])
   @@index([receiverWalletId, createdAt])
   @@map("transfers")
+}
+
+model AuditLog {
+  id         String  @id @default(uuid()) @db.Uuid
+  actorId    String? @db.Uuid
+  action     String  @db.VarChar(100)
+  entityType String  @db.VarChar(100)
+  entityId   String? @db.Uuid
+  metadata   Json?
+  ipAddress  String? @db.VarChar(45)
+  userAgent  String? @db.VarChar(500)
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
 }
