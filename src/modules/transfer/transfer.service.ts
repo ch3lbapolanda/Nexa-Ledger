@@ -19,6 +19,11 @@ import {
   WalletStatus,
 } from '../../generated/prisma/client.js';
 
+import { AuditService } from '../audit/audit.service.js';
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITY_TYPES,
+} from '../audit/audit.constants.js';
 import { LedgerService } from '../ledger/ledger.service.js';
 import { TransactionService } from '../transaction/transaction.service.js';
 
@@ -37,47 +42,45 @@ export class TransferService {
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
     private readonly transactionService: TransactionService,
+    private readonly auditService: AuditService,
   ) {}
 
-  async create(
-  userId: string,
-  input: CreateTransferInput,
-) {
-  this.validateInput(input);
+  async create(userId: string, input: CreateTransferInput) {
+    this.validateInput(input);
 
-  const normalizedInput: CreateTransferInput = {
-    ...input,
-    receiverWalletId: input.receiverWalletId.trim().toLowerCase(),
-    idempotencyKey: input.idempotencyKey.trim(),
-    description: input.description.trim(),
-  };
+    const normalizedInput: CreateTransferInput = {
+      ...input,
+      receiverWalletId: input.receiverWalletId.trim().toLowerCase(),
+      idempotencyKey: input.idempotencyKey.trim(),
+      description: input.description.trim(),
+    };
 
-  const senderWallet = await this.prisma.wallet.findUnique({
-    where: { userId },
-    select: { id: true },
-  });
+    const senderWallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
 
-  if (!senderWallet) {
-    throw new NotFoundException('Sender wallet not found');
-  }
+    if (!senderWallet) {
+      throw new NotFoundException('Sender wallet not found');
+    }
 
-  if (senderWallet.id === normalizedInput.receiverWalletId) {
-    throw new BadRequestException(
-      'Cannot transfer to the same wallet',
+    if (senderWallet.id === normalizedInput.receiverWalletId) {
+      throw new BadRequestException(
+        'Cannot transfer to the same wallet',
+      );
+    }
+
+    const requestHash = this.createRequestHash(normalizedInput);
+
+    return this.prisma.$transaction((tx) =>
+      this.executeTransfer(
+        tx,
+        userId,
+        senderWallet.id,
+        normalizedInput,
+        requestHash,
+      ),
     );
-  }
-
-  const requestHash = this.createRequestHash(normalizedInput);
-
-  return this.prisma.$transaction((tx) =>
-    this.executeTransfer(
-      tx,
-      userId,
-      senderWallet.id,
-      normalizedInput,
-      requestHash,
-    ),
-  );
   }
 
   private async executeTransfer(
@@ -107,7 +110,7 @@ export class TransferService {
       throw new NotFoundException('One or more wallets not found');
     }
 
-    // Idempotency check happens after acquiring wallet locks.
+    // Check idempotency after acquiring wallet locks.
     const existing = await this.findExistingTransfer(
       tx,
       senderWalletId,
@@ -194,7 +197,7 @@ export class TransferService {
     }
 
     const reference = `TRF-${randomUUID()}`;
-    const description = input.description.trim();
+    const description = input.description;
 
     // 1. Create balanced journal draft.
     const journal = await this.ledgerService.createDraft(tx, {
@@ -241,6 +244,21 @@ export class TransferService {
       },
     });
 
+    // 5. Record audit log in the SAME database transaction.
+    await this.auditService.create(tx, {
+      actorId: userId,
+      action: AUDIT_ACTIONS.TRANSFER_COMPLETED,
+      entityType: AUDIT_ENTITY_TYPES.TRANSFER,
+      entityId: transfer.id,
+      metadata: {
+        transactionId: transaction.id,
+        senderWalletId: sender.id,
+        receiverWalletId: receiver.id,
+        amount: input.amount.toString(),
+        currency: sender.currency,
+      },
+    });
+
     return this.serialize(transfer);
   }
 
@@ -262,7 +280,6 @@ export class TransferService {
     });
   }
 
-  
   private createRequestHash(
     input: CreateTransferInput,
   ): string {
@@ -270,7 +287,7 @@ export class TransferService {
       receiverWalletId: input.receiverWalletId,
       amount: input.amount.toString(),
       currency: 'IDR',
-      description: input.description.trim(),
+      description: input.description,
     });
 
     return createHash('sha256')
@@ -331,3 +348,4 @@ export class TransferService {
     }
   }
 }
+

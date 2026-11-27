@@ -1,9 +1,17 @@
 
 import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 
 import { PrismaService } from '../../database/prisma.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import { LedgerService } from '../ledger/ledger.service.js';
 import { TransactionService } from '../transaction/transaction.service.js';
 import { TransferService } from './transfer.service.js';
@@ -13,7 +21,6 @@ import {
   AccountStatus,
   AccountType,
   JournalEntryStatus,
-  Prisma,
   UserRole,
   UserStatus,
 } from '../../generated/prisma/client.js';
@@ -37,7 +44,10 @@ describe('TransferService integration', () => {
 
     const parsedUrl = new URL(databaseUrl);
 
-    if (parsedUrl.pathname.replace(/^\//, '') !== TEST_DATABASE_NAME) {
+    if (
+      parsedUrl.pathname.replace(/^\//, '') !==
+      TEST_DATABASE_NAME
+    ) {
       throw new Error(
         `Integration tests must use ${TEST_DATABASE_NAME}`,
       );
@@ -54,11 +64,13 @@ describe('TransferService integration', () => {
 
     const ledgerService = new LedgerService();
     const transactionService = new TransactionService(prisma);
+    const auditService = new AuditService();
 
     transferService = new TransferService(
       prisma,
       ledgerService,
       transactionService,
+      auditService,
     );
   });
 
@@ -128,7 +140,9 @@ describe('TransferService integration', () => {
     });
 
     const journalIds = [
-      ...new Set(journalLines.map((line) => line.journalEntryId)),
+      ...new Set(
+        journalLines.map((line) => line.journalEntryId),
+      ),
     ];
 
     await prisma.transfer.deleteMany({
@@ -157,16 +171,28 @@ describe('TransferService integration', () => {
       });
     }
 
+    await prisma.auditLog.deleteMany({
+      where: {
+        actorId: { in: userIds },
+      },
+    });
+
     await prisma.account.deleteMany({
-      where: { id: { in: accountIds } },
+      where: {
+        id: { in: accountIds },
+      },
     });
 
     await prisma.wallet.deleteMany({
-      where: { id: { in: walletIds } },
+      where: {
+        id: { in: walletIds },
+      },
     });
 
     await prisma.user.deleteMany({
-      where: { id: { in: userIds } },
+      where: {
+        id: { in: userIds },
+      },
     });
 
     walletIds.length = 0;
@@ -178,7 +204,7 @@ describe('TransferService integration', () => {
     await cleanupFixtures();
   });
 
-  it('should transfer funds and post a balanced journal', async () => {
+  it('should transfer funds, post a balanced journal and create audit log', async () => {
     const sender = await createWallet('sender', 500_000n);
     const receiver = await createWallet('receiver', 100_000n);
 
@@ -206,7 +232,9 @@ describe('TransferService integration', () => {
       where: { id: result.transactionId },
       include: {
         journalEntry: {
-          include: { lines: true },
+          include: {
+            lines: true,
+          },
         },
       },
     });
@@ -230,9 +258,30 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { transactionId: transaction.id },
+        where: {
+          transactionId: transaction.id,
+        },
       }),
     ).toBe(1);
+
+    const auditLog = await prisma.auditLog.findFirst({
+      where: {
+        actorId: sender.user.id,
+        action: 'TRANSFER_COMPLETED',
+        entityType: 'TRANSFER',
+        entityId: result.id,
+      },
+    });
+
+    expect(auditLog).not.toBeNull();
+
+    expect(auditLog?.metadata).toMatchObject({
+      transactionId: transaction.id,
+      senderWalletId: sender.wallet.id,
+      receiverWalletId: receiver.wallet.id,
+      amount: '75000',
+      currency: 'IDR',
+    });
   });
 
   it('should reject insufficient balance without persisting a journal', async () => {
@@ -258,7 +307,10 @@ describe('TransferService integration', () => {
       await prisma.journalLine.count({
         where: {
           accountId: {
-            in: [sender.account.id, receiver.account.id],
+            in: [
+              sender.account.id,
+              receiver.account.id,
+            ],
           },
         },
       }),
@@ -266,7 +318,18 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { senderWalletId: sender.wallet.id },
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
+      }),
+    ).toBe(0);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          actorId: sender.user.id,
+          action: 'TRANSFER_COMPLETED',
+        },
       }),
     ).toBe(0);
   });
@@ -295,7 +358,19 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { senderWalletId: sender.wallet.id },
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
+      }),
+    ).toBe(1);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          actorId: sender.user.id,
+          action: 'TRANSFER_COMPLETED',
+          entityId: first.id,
+        },
       }),
     ).toBe(1);
   });
@@ -355,7 +430,10 @@ describe('TransferService integration', () => {
       await prisma.journalLine.count({
         where: {
           accountId: {
-            in: [sender.account.id, receiver.account.id],
+            in: [
+              sender.account.id,
+              receiver.account.id,
+            ],
           },
         },
       }),
@@ -363,11 +441,95 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { senderWalletId: sender.wallet.id },
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
       }),
     ).toBe(0);
   });
-  
+
+  it('should rollback the entire transfer when audit insertion fails', async () => {
+    const sender = await createWallet('audit-rollback-sender', 500_000n);
+    const receiver = await createWallet('audit-rollback-receiver', 100_000n);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_reject_audit_insert()
+      RETURNS trigger AS $$
+      BEGIN
+        RAISE EXCEPTION 'Forced audit insertion failure';
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_reject_audit_insert_trigger
+      BEFORE INSERT ON audit_logs
+      FOR EACH ROW
+      EXECUTE FUNCTION test_reject_audit_insert()
+    `);
+
+    try {
+      await expect(
+        transferService.create(sender.user.id, {
+          receiverWalletId: receiver.wallet.id,
+          amount: 75_000n,
+          idempotencyKey: randomUUID(),
+          description: 'Audit rollback test',
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await prisma.$executeRawUnsafe(`
+        DROP TRIGGER IF EXISTS test_reject_audit_insert_trigger
+        ON audit_logs
+      `);
+
+      await prisma.$executeRawUnsafe(`
+        DROP FUNCTION IF EXISTS test_reject_audit_insert()
+      `);
+    }
+
+    const senderAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: sender.account.id },
+    });
+
+    const receiverAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: receiver.account.id },
+    });
+
+    expect(senderAccount.balance).toBe(500_000n);
+    expect(receiverAccount.balance).toBe(100_000n);
+
+    expect(
+      await prisma.journalLine.count({
+        where: {
+          accountId: {
+            in: [
+              sender.account.id,
+              receiver.account.id,
+            ],
+          },
+        },
+      }),
+    ).toBe(0);
+
+    expect(
+      await prisma.transfer.count({
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
+      }),
+    ).toBe(0);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          actorId: sender.user.id,
+          action: 'TRANSFER_COMPLETED',
+        },
+      }),
+    ).toBe(0);
+  });
+
   it('should prevent double spending during concurrent transfers', async () => {
     const sender = await createWallet('concurrent-sender', 100_000n);
     const receiverA = await createWallet('concurrent-receiver-a', 0n);
@@ -419,7 +581,9 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { senderWalletId: sender.wallet.id },
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
       }),
     ).toBe(1);
   });
@@ -455,60 +619,75 @@ describe('TransferService integration', () => {
 
     expect(
       await prisma.transfer.count({
-        where: { senderWalletId: sender.wallet.id },
+        where: {
+          senderWalletId: sender.wallet.id,
+        },
+      }),
+    ).toBe(1);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          actorId: sender.user.id,
+          action: 'TRANSFER_COMPLETED',
+        },
       }),
     ).toBe(1);
   });
-it('should normalize idempotency key before storing it', async () => {
-  const sender = await createWallet(
-    'normalize-sender',
-    500_000n,
-  );
 
-  const receiver = await createWallet(
-    'normalize-receiver',
-    100_000n,
-  );
+  it('should normalize idempotency key before storing it', async () => {
+    const sender = await createWallet(
+      'normalize-sender',
+      500_000n,
+    );
 
-  const input = {
-    receiverWalletId: receiver.wallet.id,
-    amount: 10_000n,
-    idempotencyKey: '  transfer-normalize-001  ',
-    description: '  Test normalization  ',
-  };
+    const receiver = await createWallet(
+      'normalize-receiver',
+      100_000n,
+    );
 
-  const first = await transferService.create(
-    sender.user.id,
-    input,
-  );
+    const input = {
+      receiverWalletId: receiver.wallet.id,
+      amount: 10_000n,
+      idempotencyKey: '  transfer-normalize-001  ',
+      description: '  Test normalization  ',
+    };
 
-  const second = await transferService.create(
-    sender.user.id,
-    {
-      ...input,
-      idempotencyKey: 'transfer-normalize-001',
-      description: 'Test normalization',
-    },
-  );
+    const first = await transferService.create(
+      sender.user.id,
+      input,
+    );
 
-  expect(first.id).toBe(second.id);
-
-  const stored = await prisma.transfer.findUnique({
-    where: {
-      senderWalletId_idempotencyKey: {
-        senderWalletId: sender.wallet.id,
+    const second = await transferService.create(
+      sender.user.id,
+      {
+        ...input,
         idempotencyKey: 'transfer-normalize-001',
+        description: 'Test normalization',
       },
-    },
+    );
+
+    expect(first.id).toBe(second.id);
+
+    const stored = await prisma.transfer.findUnique({
+      where: {
+        senderWalletId_idempotencyKey: {
+          senderWalletId: sender.wallet.id,
+          idempotencyKey: 'transfer-normalize-001',
+        },
+      },
+    });
+
+    expect(stored).not.toBeNull();
+    expect(stored?.idempotencyKey).toBe(
+      'transfer-normalize-001',
+    );
+
+    const senderAccount = await prisma.account.findUniqueOrThrow({
+      where: { id: sender.account.id },
+    });
+
+    expect(senderAccount.balance).toBe(490_000n);
   });
-
-  expect(stored).not.toBeNull();
-  expect(stored?.idempotencyKey).toBe('transfer-normalize-001');
-
-  const senderAccount = await prisma.account.findUniqueOrThrow({
-    where: { id: sender.account.id },
-  });
-
-  expect(senderAccount.balance).toBe(490_000n);
 });
-});
+

@@ -13,6 +13,11 @@ import {
   TransactionType,
   WalletStatus,
 } from '../../generated/prisma/client.js';
+import { AuditService } from '../audit/audit.service.js';
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITY_TYPES,
+} from '../audit/audit.constants.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { LedgerService } from '../ledger/ledger.service.js';
 import { TransactionService } from '../transaction/transaction.service.js';
@@ -20,6 +25,9 @@ import { TransferService } from './transfer.service.js';
 
 describe('TransferService', () => {
   let service: TransferService;
+  let auditService: {
+  create: ReturnType<typeof vi.fn>;
+};
 
   let prisma: {
     wallet: {
@@ -145,6 +153,9 @@ describe('TransferService', () => {
   }
 
   beforeEach(() => {
+    auditService = {
+      create: vi.fn().mockResolvedValue({ id: 'audit-001' }),
+      };
     tx = {
       $queryRaw: vi.fn().mockResolvedValue([
         { id: senderWalletId },
@@ -192,9 +203,10 @@ describe('TransferService', () => {
     };
 
     service = new TransferService(
-      prisma as unknown as PrismaService,
-      ledgerService as unknown as LedgerService,
-      transactionService as unknown as TransactionService,
+    prisma,
+    ledgerService,
+    transactionService,
+    auditService as unknown as AuditService,
     );
   });
 
