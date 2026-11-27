@@ -24,6 +24,7 @@ import {
 import { AuditService } from '../audit/audit.service.js';
 import { LedgerService } from '../ledger/ledger.service.js';
 import { TransactionHistoryQueryDto } from './transaction-history-query.dto.js';
+import { TransactionReversalService } from './transaction-reversal.service.js';
 import { TransactionService } from './transaction.service.js';
 import { TransferService } from '../transfer/transfer.service.js';
 
@@ -31,6 +32,7 @@ describe('Transaction history integration', () => {
   let prisma: PrismaService;
   let transactionService: TransactionService;
   let transferService: TransferService;
+  let reversalService: TransactionReversalService;
 
   const userIds: string[] = [];
   const walletIds: string[] = [];
@@ -65,13 +67,22 @@ describe('Transaction history integration', () => {
     prisma = new PrismaService(config);
     await prisma.$connect();
 
+    const ledgerService = new LedgerService();
+    const auditService = new AuditService();
+
     transactionService = new TransactionService(prisma);
 
     transferService = new TransferService(
       prisma,
-      new LedgerService(),
+      ledgerService,
       transactionService,
-      new AuditService(),
+      auditService,
+    );
+
+    reversalService = new TransactionReversalService(
+      prisma,
+      ledgerService,
+      auditService,
     );
   });
 
@@ -162,9 +173,31 @@ describe('Transaction history integration', () => {
     ];
 
     if (journalIds.length > 0) {
-      await prisma.transaction.deleteMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           journalEntryId: { in: journalIds },
+        },
+        select: {
+          id: true,
+          reversalOfId: true,
+        },
+      });
+
+      const transactionIds = transactions.map(
+        (transaction) => transaction.id,
+      );
+
+      // Delete reversal transactions before their original transactions.
+      await prisma.transaction.deleteMany({
+        where: {
+          id: { in: transactionIds },
+          reversalOfId: { not: null },
+        },
+      });
+
+      await prisma.transaction.deleteMany({
+        where: {
+          id: { in: transactionIds },
         },
       });
 
@@ -411,4 +444,57 @@ describe('Transaction history integration', () => {
       totalPages: 0,
     });
   });
+
+  it('should include original and reversal transactions in both customers history', async () => {
+    const alice = await createWallet('reversal-history-alice');
+    const bob = await createWallet('reversal-history-bob');
+
+    const transfer = await createTransfer(alice, bob);
+
+    const reversal = await reversalService.reverse({
+      transactionId: transfer.transactionId,
+      actorId: alice.user.id,
+    });
+
+    const aliceHistory = await transactionService.list(
+      alice.user.id,
+      UserRole.CUSTOMER,
+      new TransactionHistoryQueryDto(),
+    );
+
+    const bobHistory = await transactionService.list(
+      bob.user.id,
+      UserRole.CUSTOMER,
+      new TransactionHistoryQueryDto(),
+    );
+
+    for (const history of [aliceHistory, bobHistory]) {
+      expect(history.data).toHaveLength(2);
+      expect(history.meta.total).toBe(2);
+
+      const originalTransaction = history.data.find(
+        (transaction) => transaction.id === transfer.transactionId,
+      );
+
+      const reversalTransaction = history.data.find(
+        (transaction) =>
+          transaction.id === reversal.reversalTransaction.id,
+      );
+
+      expect(originalTransaction).toBeDefined();
+      expect(originalTransaction?.status).toBe(
+        TransactionStatus.REVERSED,
+      );
+
+      expect(reversalTransaction).toBeDefined();
+      expect(reversalTransaction?.status).toBe(
+        TransactionStatus.COMPLETED,
+      );
+
+      expect(reversalTransaction?.reversalOfId).toBe(
+        transfer.transactionId,
+      );
+    }
+  });
 });
+
