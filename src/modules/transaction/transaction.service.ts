@@ -2,15 +2,22 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
 import { PrismaService } from '../../database/prisma.service.js';
+
 import {
   JournalEntryStatus,
   Prisma,
+  TransactionStatus,
   TransactionType,
+  UserRole,
 } from '../../generated/prisma/client.js';
+
+import { TransactionHistoryQueryDto } from './transaction-history-query.dto.js';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -25,6 +32,10 @@ export interface CreateTransactionInput {
 
 @Injectable()
 export class TransactionService {
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
+
   async create(
     tx: TransactionClient,
     input: CreateTransactionInput,
@@ -72,6 +83,129 @@ export class TransactionService {
 
       throw error;
     }
+  }
+
+  async list(
+    userId: string,
+    role: UserRole,
+    query: TransactionHistoryQueryDto,
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const filters: Prisma.TransactionWhereInput = {};
+
+    if (query.type) {
+      filters.type = query.type;
+    }
+
+    if (query.status) {
+      filters.status = query.status;
+    }
+
+    if (role === UserRole.CUSTOMER) {
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+
+      if (!wallet) {
+        return {
+          data: [],
+          meta: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+          },
+        };
+      }
+
+      filters.OR = [
+        {
+          transfer: {
+            is: {
+              senderWalletId: wallet.id,
+            },
+          },
+        },
+        {
+          transfer: {
+            is: {
+              receiverWalletId: wallet.id,
+            },
+          },
+        },
+        {
+          journalEntry: {
+            is: {
+              lines: {
+                some: {
+                  account: {
+                    is: {
+                      walletId: wallet.id,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ];
+    } else if (role !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'You are not allowed to view transactions',
+      );
+    }
+
+    const [transactions, total] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where: filters,
+        include: {
+          transfer: {
+            select: {
+              senderWalletId: true,
+              receiverWalletId: true,
+            },
+          },
+          reversalOf: {
+            select: {
+              id: true,
+              reference: true,
+            },
+          },
+          reversedBy: {
+            select: {
+              id: true,
+              reference: true,
+            },
+          },
+        },
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+        skip,
+        take: limit,
+      }),
+
+      this.prisma.transaction.count({
+        where: filters,
+      }),
+    ]);
+
+    return {
+      data: transactions.map((transaction) =>
+        this.serialize(transaction),
+      ),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findById(id: string) {
@@ -181,8 +315,5 @@ export class TransactionService {
       );
     }
   }
-
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
 }
+

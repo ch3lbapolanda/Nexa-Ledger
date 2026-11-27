@@ -2,16 +2,29 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import { PrismaService } from '../../database/prisma.service.js';
+
 import {
   JournalEntryStatus,
   Prisma,
+  TransactionStatus,
   TransactionType,
+  UserRole,
 } from '../../generated/prisma/client.js';
+
+import { TransactionHistoryQueryDto } from './transaction-history-query.dto.js';
 import { TransactionService } from './transaction.service.js';
 
 describe('TransactionService', () => {
@@ -27,8 +40,13 @@ describe('TransactionService', () => {
   };
 
   const prismaMock = {
+    wallet: {
+      findUnique: vi.fn(),
+    },
     transaction: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
     },
   };
 
@@ -39,6 +57,12 @@ describe('TransactionService', () => {
 
   const transactionId =
     '22222222-2222-4222-8222-222222222222';
+
+  const walletId =
+    '33333333-3333-4333-8333-333333333333';
+
+  const userId =
+    '44444444-4444-4444-8444-444444444444';
 
   const input = {
     reference: 'TXN-TEST-001',
@@ -246,6 +270,305 @@ describe('TransactionService', () => {
     });
   });
 
+  describe('list', () => {
+    const transactionRecord = {
+      id: transactionId,
+      reference: 'TXN-TEST-001',
+      type: TransactionType.DEPOSIT,
+      status: TransactionStatus.COMPLETED,
+      amount: 9007199254740993n,
+      currency: 'IDR',
+      description: 'Test transaction',
+      createdAt: new Date(),
+    };
+
+    it('should return all transactions for ADMIN with pagination', async () => {
+      prismaMock.transaction.findMany.mockResolvedValue([
+        transactionRecord,
+      ]);
+
+      prismaMock.transaction.count.mockResolvedValue(25);
+
+      const query = {
+        page: 2,
+        limit: 10,
+      } as TransactionHistoryQueryDto;
+
+      const result = await service.list(
+        userId,
+        UserRole.ADMIN,
+        query,
+      );
+
+      expect(
+        prismaMock.wallet.findUnique,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        prismaMock.transaction.findMany,
+      ).toHaveBeenCalledWith({
+        where: {},
+        include: {
+          transfer: {
+            select: {
+              senderWalletId: true,
+              receiverWalletId: true,
+            },
+          },
+          reversalOf: {
+            select: {
+              id: true,
+              reference: true,
+            },
+          },
+          reversedBy: {
+            select: {
+              id: true,
+              reference: true,
+            },
+          },
+        },
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+        skip: 10,
+        take: 10,
+      });
+
+      expect(
+        prismaMock.transaction.count,
+      ).toHaveBeenCalledWith({
+        where: {},
+      });
+
+      expect(result.meta).toEqual({
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3,
+      });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].amount).toBe('9007199254740993');
+    });
+
+    it('should filter transactions by type and status', async () => {
+      prismaMock.transaction.findMany.mockResolvedValue([]);
+      prismaMock.transaction.count.mockResolvedValue(0);
+
+      const query = {
+        page: 1,
+        limit: 10,
+        type: TransactionType.TRANSFER,
+        status: TransactionStatus.REVERSED,
+      } as TransactionHistoryQueryDto;
+
+      await service.list(
+        userId,
+        UserRole.ADMIN,
+        query,
+      );
+
+      const expectedWhere = {
+        type: TransactionType.TRANSFER,
+        status: TransactionStatus.REVERSED,
+      };
+
+      expect(
+        prismaMock.transaction.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expectedWhere,
+        }),
+      );
+
+      expect(
+        prismaMock.transaction.count,
+      ).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('should scope CUSTOMER transactions to owned wallet', async () => {
+      prismaMock.wallet.findUnique.mockResolvedValue({
+        id: walletId,
+      });
+
+      prismaMock.transaction.findMany.mockResolvedValue([
+        transactionRecord,
+      ]);
+
+      prismaMock.transaction.count.mockResolvedValue(1);
+
+      const result = await service.list(
+        userId,
+        UserRole.CUSTOMER,
+        {
+          page: 1,
+          limit: 10,
+        } as TransactionHistoryQueryDto,
+      );
+
+      expect(
+        prismaMock.wallet.findUnique,
+      ).toHaveBeenCalledWith({
+        where: { userId },
+        select: { id: true },
+      });
+
+      const expectedWhere = {
+        OR: [
+          {
+            transfer: {
+              is: {
+                senderWalletId: walletId,
+              },
+            },
+          },
+          {
+            transfer: {
+              is: {
+                receiverWalletId: walletId,
+              },
+            },
+          },
+          {
+            journalEntry: {
+              is: {
+                lines: {
+                  some: {
+                    account: {
+                      is: {
+                        walletId,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      expect(
+        prismaMock.transaction.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expectedWhere,
+        }),
+      );
+
+      expect(
+        prismaMock.transaction.count,
+      ).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('should include both outgoing and incoming transfers in customer scope', async () => {
+      prismaMock.wallet.findUnique.mockResolvedValue({
+        id: walletId,
+      });
+
+      prismaMock.transaction.findMany.mockResolvedValue([]);
+      prismaMock.transaction.count.mockResolvedValue(0);
+
+      await service.list(
+        userId,
+        UserRole.CUSTOMER,
+        {} as TransactionHistoryQueryDto,
+      );
+
+      const call =
+        prismaMock.transaction.findMany.mock.calls[0][0];
+
+      expect(call.where.OR).toEqual(
+        expect.arrayContaining([
+          {
+            transfer: {
+              is: {
+                senderWalletId: walletId,
+              },
+            },
+          },
+          {
+            transfer: {
+              is: {
+                receiverWalletId: walletId,
+              },
+            },
+          },
+        ]),
+      );
+    });
+
+    it('should return empty history when customer has no wallet', async () => {
+      prismaMock.wallet.findUnique.mockResolvedValue(null);
+
+      const result = await service.list(
+        userId,
+        UserRole.CUSTOMER,
+        {} as TransactionHistoryQueryDto,
+      );
+
+      expect(result).toEqual({
+        data: [],
+        meta: {
+          page: 1,
+          limit: 10,
+          total: 0,
+          totalPages: 0,
+        },
+      });
+
+      expect(
+        prismaMock.transaction.findMany,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        prismaMock.transaction.count,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should reject unsupported user role', async () => {
+      await expect(
+        service.list(
+          userId,
+          'UNKNOWN' as UserRole,
+          {} as TransactionHistoryQueryDto,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(
+        prismaMock.transaction.findMany,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should return empty data when no transactions exist', async () => {
+      prismaMock.transaction.findMany.mockResolvedValue([]);
+      prismaMock.transaction.count.mockResolvedValue(0);
+
+      const result = await service.list(
+        userId,
+        UserRole.ADMIN,
+        {} as TransactionHistoryQueryDto,
+      );
+
+      expect(result).toEqual({
+        data: [],
+        meta: {
+          page: 1,
+          limit: 10,
+          total: 0,
+          totalPages: 0,
+        },
+      });
+    });
+  });
+
   describe('findById', () => {
     it('should return transaction with BigInt amount serialized as string', async () => {
       prismaMock.transaction.findUnique.mockResolvedValue({
@@ -327,3 +650,4 @@ describe('TransactionService', () => {
     });
   });
 });
+
