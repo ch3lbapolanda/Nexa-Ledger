@@ -12,6 +12,7 @@ import { AuthenticationModule } from './modules/authentication/authentication.mo
 import { WalletModule } from './modules/wallet/wallet.module.js';
 import { TransactionModule } from './modules/transaction/transaction.module.js';
 import { TransferModule } from './modules/transfer/transfer.module.js';
+import { AccountModule } from './modules/account/account.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { TransferModule } from './modules/transfer/transfer.module.js';
     DatabaseModule,
     IdentityModule,
     AuthenticationModule,
+    AccountModule,
     WalletModule,
     TransactionModule,
     TransferModule,
