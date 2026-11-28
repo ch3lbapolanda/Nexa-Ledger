@@ -609,6 +609,49 @@ describe('TransactionService', () => {
     });
   });
 
+  it('should serialize nested journal line BigInt amounts as strings', async () => {
+  prismaMock.transaction.findUnique.mockResolvedValue({
+    id: transactionId,
+    reference: 'TXN-TEST-002',
+    amount: 9007199254740993n,
+    journalEntry: {
+      id: journalEntryId,
+      lines: [
+        {
+          id: '55555555-5555-4555-8555-555555555555',
+          side: 'DEBIT',
+          amount: 9007199254740993n,
+        },
+        {
+          id: '66666666-6666-4666-8666-666666666666',
+          side: 'CREDIT',
+          amount: 9007199254740993n,
+        },
+      ],
+    },
+  });
+
+  const result = await service.findById(transactionId);
+
+  expect(result.amount).toBe('9007199254740993');
+
+  expect(
+    result.journalEntry.lines[0].amount,
+  ).toBe('9007199254740993');
+
+  expect(
+    result.journalEntry.lines[1].amount,
+  ).toBe('9007199254740993');
+
+  expect(
+    typeof result.journalEntry.lines[0].amount,
+  ).toBe('string');
+
+  expect(
+    typeof result.journalEntry.lines[1].amount,
+  ).toBe('string');
+});
+
   describe('findByReference', () => {
     it('should return transaction by reference', async () => {
       prismaMock.transaction.findUnique.mockResolvedValue({

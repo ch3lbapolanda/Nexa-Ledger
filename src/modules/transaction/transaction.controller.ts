@@ -25,6 +25,10 @@ interface AuthenticatedRequest {
     email: string;
     role: UserRole;
   };
+  ip?: string;
+  headers: {
+    'user-agent'?: string;
+  };
 }
 
 @Controller('transactions')
@@ -61,7 +65,10 @@ export class TransactionController {
     return this.reversalService.reverse({
       transactionId,
       actorId: request.user.sub,
+      ipAddress: request.ip ?? null,
+      userAgent: request.headers['user-agent'] ?? null,
     });
   }
 }
+
 

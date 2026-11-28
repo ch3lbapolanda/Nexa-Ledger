@@ -127,7 +127,7 @@ describe('TransferService', () => {
       receiverWalletId: transferInput.receiverWalletId,
       amount: transferInput.amount.toString(),
       currency: 'IDR',
-      description: transferInput.description.trim(),
+      description: transferInput.description,
     });
 
     return createHash('sha256')
@@ -335,6 +335,24 @@ describe('TransferService', () => {
 
     expect(ledgerService.createDraft).not.toHaveBeenCalled();
   });
+
+  it('should reject when sender wallet belongs to another user', async () => {
+  tx.wallet.findMany.mockResolvedValue([
+    {
+      ...senderWallet,
+      userId: 'another-user',
+    },
+    receiverWallet,
+  ]);
+
+  await expect(
+    service.create(userId, input),
+  ).rejects.toThrow(BadRequestException);
+
+  expect(ledgerService.createDraft).not.toHaveBeenCalled();
+  expect(transactionService.create).not.toHaveBeenCalled();
+  expect(tx.transfer.create).not.toHaveBeenCalled();
+});
 
   it('should reject when either wallet is inactive', async () => {
     tx.wallet.findMany.mockResolvedValue([
